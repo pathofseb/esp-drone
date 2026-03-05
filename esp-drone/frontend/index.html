@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 Drone PID Tuner</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: white;
+        }
+
+        h1 {
+            font-size: 24px;
+        }
+
+        h2 {
+            font-size: 18px;
+            margin-top: 20px;
+            border-bottom: 1px solid #000;
+        }
+
+        h3 {
+            font-size: 16px;
+            margin-top: 15px;
+        }
+
+        .pid-inputs {
+            margin: 10px 0;
+        }
+
+        .pid-inputs label {
+            display: inline-block;
+            width: 80px;
+        }
+
+        .pid-inputs input {
+            width: 100px;
+            margin-right: 20px;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin: 20px 10px 0 0;
+            font-size: 14px;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #000;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>ESP32 Drone PID Tuner</h1>
+
+    <h2>Rate PID (Inner Loop)</h2>
+
+    <h3>Roll</h3>
+    <div class="pid-inputs">
+        <label>P:</label><input type="number" id="PRateRoll" step="0.01" value="0.6">
+        <label>I:</label><input type="number" id="IRateRoll" step="0.1" value="3.5">
+        <label>D:</label><input type="number" id="DRateRoll" step="0.001" value="0.03">
+    </div>
+
+    <h3>Pitch</h3>
+    <div class="pid-inputs">
+        <label>P:</label><input type="number" id="PRatePitch" step="0.01" value="0.6">
+        <label>I:</label><input type="number" id="IRatePitch" step="0.1" value="3.5">
+        <label>D:</label><input type="number" id="DRatePitch" step="0.001" value="0.03">
+    </div>
+
+    <h3>Yaw</h3>
+    <div class="pid-inputs">
+        <label>P:</label><input type="number" id="PRateYaw" step="0.01" value="2.0">
+        <label>I:</label><input type="number" id="IRateYaw" step="0.1" value="12.0">
+        <label>D:</label><input type="number" id="DRateYaw" step="0.001" value="0.0">
+    </div>
+
+    <h2>Angle PID (Outer Loop)</h2>
+
+    <h3>Roll</h3>
+    <div class="pid-inputs">
+        <label>P:</label><input type="number" id="PAngleRoll" step="0.1" value="2.0">
+        <label>I:</label><input type="number" id="IAngleRoll" step="0.1" value="0.0">
+        <label>D:</label><input type="number" id="DAngleRoll" step="0.01" value="0.0">
+    </div>
+
+    <h3>Pitch</h3>
+    <div class="pid-inputs">
+        <label>P:</label><input type="number" id="PAnglePitch" step="0.1" value="2.0">
+        <label>I:</label><input type="number" id="IAnglePitch" step="0.1" value="0.0">
+        <label>D:</label><input type="number" id="DAnglePitch" step="0.01" value="0.0">
+    </div>
+
+    <button onclick="sendParameters()">Send to Drone</button>
+    <button onclick="resetParameters()">Reset</button>
+
+    <div id="status"></div>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+        const DRONE_IP = '192.168.1.100'; // Change this to your drone's IP
+
+        async function sendParameters() {
+            const params = {
+                droneIp: DRONE_IP,
+                PRateRoll: parseFloat(document.getElementById('PRateRoll').value),
+                PRatePitch: parseFloat(document.getElementById('PRatePitch').value),
+                PRateYaw: parseFloat(document.getElementById('PRateYaw').value),
+                IRateRoll: parseFloat(document.getElementById('IRateRoll').value),
+                IRatePitch: parseFloat(document.getElementById('IRatePitch').value),
+                IRateYaw: parseFloat(document.getElementById('IRateYaw').value),
+                DRateRoll: parseFloat(document.getElementById('DRateRoll').value),
+                DRatePitch: parseFloat(document.getElementById('DRatePitch').value),
+                DRateYaw: parseFloat(document.getElementById('DRateYaw').value),
+                PAngleRoll: parseFloat(document.getElementById('PAngleRoll').value),
+                PAnglePitch: parseFloat(document.getElementById('PAnglePitch').value),
+                IAngleRoll: parseFloat(document.getElementById('IAngleRoll').value),
+                IAnglePitch: parseFloat(document.getElementById('IAnglePitch').value),
+                DAngleRoll: parseFloat(document.getElementById('DAngleRoll').value),
+                DAnglePitch: parseFloat(document.getElementById('DAnglePitch').value)
+            };
+
+            try {
+                const response = await fetch(`${API_URL}/send`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(params)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showStatus('Sent successfully!');
+                } else {
+                    showStatus('Error: ' + result.detail);
+                }
+            } catch (error) {
+                showStatus('Connection error: ' + error.message);
+            }
+        }
+
+        function resetParameters() {
+            document.getElementById('PRateRoll').value = 0.6;
+            document.getElementById('PRatePitch').value = 0.6;
+            document.getElementById('PRateYaw').value = 2.0;
+            document.getElementById('IRateRoll').value = 3.5;
+            document.getElementById('IRatePitch').value = 3.5;
+            document.getElementById('IRateYaw').value = 12.0;
+            document.getElementById('DRateRoll').value = 0.03;
+            document.getElementById('DRatePitch').value = 0.03;
+            document.getElementById('DRateYaw').value = 0.0;
+            document.getElementById('PAngleRoll').value = 2.0;
+            document.getElementById('PAnglePitch').value = 2.0;
+            document.getElementById('IAngleRoll').value = 0.0;
+            document.getElementById('IAnglePitch').value = 0.0;
+            document.getElementById('DAngleRoll').value = 0.0;
+            document.getElementById('DAnglePitch').value = 0.0;
+            showStatus('Reset to defaults');
+        }
+
+        function showStatus(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.style.display = 'block';
+
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
