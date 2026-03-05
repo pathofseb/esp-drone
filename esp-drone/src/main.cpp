@@ -3,6 +3,10 @@
 #include <nRF24L01.h>
 #include <RF24.h>
 #include <DShotRMT.h>
+#include <Wifi.h>
+#include <WiFiUdp.h>
+
+int TUNE = 0; // 0 = No Tuning, 1 = Tune PIDs
 
 float dt = 0.004; // 4ms loop time, aka 250Hz
 
@@ -19,10 +23,23 @@ int PrintCounter = 0;
 
 float AccAngleCalibrationRoll, AccAngleCalibrationPitch;
 
-// PID values
-float PRateRoll=0.6; float PRatePitch=PRateRoll; float PRateYaw=2;
-float IRateRoll=3.5; float IRatePitch=IRateRoll; float IRateYaw=12;
-float DRateRoll=0.03; float DRatePitch=DRateRoll; float DRateYaw=0;
+// used for tuning, to easily send PID values to the drone without reflashing
+struct PID_Parameters {
+    float PRateRoll, PRatePitch, PRateYaw;
+    float IRateRoll, IRatePitch, IRateYaw;
+    float DRateRoll, DRatePitch, DRateYaw;
+    float PAngleRoll, PAnglePitch;
+    float IAngleRoll, IAnglePitch;
+    float DAngleRoll, DAnglePitch;
+  };
+
+PID_Parameters pidParams;
+
+
+WiFiUDP udp;
+unsigned int localUdpPort = SERVER_PORT; // Port to listen on
+char incomingPacket[255]; // Buffer for incomming packets
+
 
 
 RF24 radio(25, 26);   // def pins for radio
@@ -136,6 +153,10 @@ class PID {
       prevError = 0;
     }
 
+    void updateGains(float p, float i, float d) {
+      Kp = p; Ki = i; Kd = d;
+    }
+
     float compute(float error) {
       // 1. Proportional
       float P = Kp * error;
@@ -165,21 +186,59 @@ class PID {
 };
 
 // Global PID Instances
-// Global PID Instances
-// 1. Rate PIDs (Inner Loop)
-PID PIDRateRoll(PRateRoll, IRateRoll, DRateRoll, 800, dt);
-PID PIDRatePitch(PRatePitch, IRatePitch, DRatePitch, 800, dt);
-PID PIDRateYaw(PRateYaw, IRateYaw, DRateYaw, 800, dt);
-
-// 2. Angle PIDs (Outer Loop)
-// P=2.0 is a good starting point for Angle control
+PID PIDRateRoll(0.6, 3.5, 0.03, 800, dt);
+PID PIDRatePitch(0.6, 3.5, 0.03, 800, dt);
+PID PIDRateYaw(2.0, 12.0, 0.0, 800, dt);
 PID PIDAngleRoll(2.0, 0, 0, 400, dt);
 PID PIDAnglePitch(2.0, 0, 0, 400, dt);
 
-
 void setup() {
   Serial.begin(115200); // Increased speed to match your test script
+
+  if (TUNE == 1) {
+
+    // Static IP adress
+    WiFi.config(
+        IPAddress(192, 168, 1, 100),  // Static IP
+        IPAddress(192, 168, 1, 1),     // Gateway
+        IPAddress(255, 255, 255, 0)    // Subnet mask
+      );
+
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+    }
+    Serial.println("WiFi connected. IP address: " + WiFi.localIP().toString());
+
+    // Initialize UDP
+    udp.begin(localUdpPort);
+  }
   
+
+  // Initialize PID parameters
+  pidParams.PRateRoll = 0.6;
+  pidParams.PRatePitch = 0.6;
+  pidParams.PRateYaw = 2;
+  pidParams.IRateRoll = 3.5;
+  pidParams.IRatePitch = 3.5;
+  pidParams.IRateYaw = 12;
+  pidParams.DRateRoll = 0.03;
+  pidParams.DRatePitch = 0.03;
+  pidParams.DRateYaw = 0;
+  pidParams.PAngleRoll = 2.0;
+  pidParams.PAnglePitch = 2.0;
+  pidParams.IAngleRoll = 0;
+  pidParams.IAnglePitch = 0;
+  pidParams.DAngleRoll = 0;
+  pidParams.DAnglePitch = 0;
+
+    // Update PID controllers with initial values from pidParams
+  PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
+  PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
+  PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
+  PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
+  PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
+
   // 1. Explicitly define SPI pins for the NRF24L01
   // SCK=18, MISO=19, MOSI=23, SS/CSN=26
   SPI.begin(18, 19, 23, 26); 
@@ -251,6 +310,21 @@ void setup() {
 
 
 void loop() {
+
+  int packetSize = udp.parsePacket();
+  if (TUNE == 1 && packetSize==sizeof(PID_Parameters)) {
+    // Read the incoming packet into the PID_Parameters struct
+    udp.read((char*)&pidParams, sizeof(PID_Parameters));
+    
+    // Update all PID controllers with new values
+    PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
+    PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
+    PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
+    PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
+    PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
+
+    Serial.println("Received new PID parameters via UDP");
+  }
 
   if (radio.available()) {
   // Read the data and put it into our struct
