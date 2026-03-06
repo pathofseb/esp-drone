@@ -3,10 +3,12 @@
 #include <nRF24L01.h>
 #include <RF24.h>
 #include <DShotRMT.h>
-#include <Wifi.h>
+#include <WiFi.h>
 #include <WiFiUdp.h>
+#include "secrets.h"
 
-int TUNE = 0; // 0 = No Tuning, 1 = Tune PIDs
+int TUNE = 1; // 0 = No Tuning, 1 = Tune PIDs
+int MOTOR_TEST_MODE = 0; // 0=OFF, 1=M1, 2=M2, 3=M3, 4=M4, 5=ALL
 
 float dt = 0.004; // 4ms loop time, aka 250Hz
 
@@ -186,47 +188,68 @@ class PID {
 };
 
 // Global PID Instances
-PID PIDRateRoll(0.6, 3.5, 0.03, 800, dt);
-PID PIDRatePitch(0.6, 3.5, 0.03, 800, dt);
+PID PIDRateRoll(2, 0.05, 0.03, 800, dt);
+PID PIDRatePitch(2, 0.05, 0.03, 800, dt);
 PID PIDRateYaw(2.0, 12.0, 0.0, 800, dt);
-PID PIDAngleRoll(2.0, 0, 0, 400, dt);
-PID PIDAnglePitch(2.0, 0, 0, 400, dt);
+PID PIDAngleRoll(1.0, 0, 0, 400, dt);
+PID PIDAnglePitch(1.0, 0, 0, 400, dt);
 
 void setup() {
   Serial.begin(115200); // Increased speed to match your test script
+  delay(1000); // Give serial time to initialize
+
+  Serial.println("\n\n=== ESP32 DRONE STARTING ===");
+  Serial.print("TUNE mode: ");
+  Serial.println(TUNE);
 
   if (TUNE == 1) {
+    Serial.println("Starting WiFi configuration...");
+    Serial.print("SSID: ");
+    Serial.println(WIFI_SSID);
 
-    // Static IP adress
-    WiFi.config(
-        IPAddress(192, 168, 1, 100),  // Static IP
-        IPAddress(192, 168, 1, 1),     // Gateway
-        IPAddress(255, 255, 255, 0)    // Subnet mask
-      );
-
+    // Use DHCP to get IP automatically
+    Serial.println("Connecting to WiFi (DHCP)...");
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-    }
-    Serial.println("WiFi connected. IP address: " + WiFi.localIP().toString());
 
-    // Initialize UDP
-    udp.begin(localUdpPort);
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+    Serial.println();
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("✓ WiFi connected!");
+      Serial.print("IP address: ");
+      Serial.println(WiFi.localIP());
+
+      // Initialize UDP
+      udp.begin(localUdpPort);
+      Serial.print("UDP listening on port: ");
+      Serial.println(localUdpPort);
+    } else {
+      Serial.println("✗ WiFi connection FAILED!");
+      Serial.print("Status code: ");
+      Serial.println(WiFi.status());
+    }
+  } else {
+    Serial.println("TUNE mode disabled - WiFi not starting");
   }
   
 
   // Initialize PID parameters
-  pidParams.PRateRoll = 0.6;
-  pidParams.PRatePitch = 0.6;
+  pidParams.PRateRoll = 2.35;
+  pidParams.PRatePitch = 2.35;
   pidParams.PRateYaw = 2;
-  pidParams.IRateRoll = 3.5;
-  pidParams.IRatePitch = 3.5;
+  pidParams.IRateRoll = 0.05;
+  pidParams.IRatePitch = 0.05;
   pidParams.IRateYaw = 12;
   pidParams.DRateRoll = 0.03;
   pidParams.DRatePitch = 0.03;
   pidParams.DRateYaw = 0;
-  pidParams.PAngleRoll = 2.0;
-  pidParams.PAnglePitch = 2.0;
+  pidParams.PAngleRoll = 1.0;
+  pidParams.PAnglePitch = 1.0;
   pidParams.IAngleRoll = 0;
   pidParams.IAnglePitch = 0;
   pidParams.DAngleRoll = 0;
@@ -311,19 +334,32 @@ void setup() {
 
 void loop() {
 
-  int packetSize = udp.parsePacket();
-  if (TUNE == 1 && packetSize==sizeof(PID_Parameters)) {
-    // Read the incoming packet into the PID_Parameters struct
-    udp.read((char*)&pidParams, sizeof(PID_Parameters));
-    
-    // Update all PID controllers with new values
-    PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
-    PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
-    PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
-    PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
-    PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
+  if (TUNE == 1) {
+    int packetSize = udp.parsePacket();
+    if (packetSize > 0) {
+      Serial.print("UDP packet received! Size: ");
+      Serial.print(packetSize);
+      Serial.print(" bytes, Expected: ");
+      Serial.print(sizeof(PID_Parameters));
+      Serial.println(" bytes");
 
-    Serial.println("Received new PID parameters via UDP");
+      if (packetSize == sizeof(PID_Parameters)) {
+        // Read the incoming packet into the PID_Parameters struct
+        udp.read((char*)&pidParams, sizeof(PID_Parameters));
+
+        // Update all PID controllers with new values
+        PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
+        PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
+        PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
+        PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
+        PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
+
+        Serial.println("✓ PID parameters updated!");
+      } else {
+        Serial.println("✗ Wrong packet size, ignoring");
+        udp.flush(); // Discard the packet
+      }
+    }
   }
 
   if (radio.available()) {
@@ -420,12 +456,31 @@ void loop() {
   motor04.sendThrottle(MotorInput4);
 
   // --- Only print every 10th loop ---
-  PrintCounter++; 
-  if (PrintCounter >= 10) {
-    Serial.print("Roll:"); Serial.print(KalmanAngleRoll, 2);
-    Serial.print(" Pitch:"); Serial.print(KalmanAnglePitch, 2);
-    Serial.print(" Yaw-Rate:"); Serial.println(RateYaw, 2);
-    
+  PrintCounter++;
+  if (PrintCounter >= 100) {
+    Serial.println("\n=== PID PARAMETERS ===");
+    Serial.println("RATE PID:");
+    Serial.print("  Roll:  P="); Serial.print(pidParams.PRateRoll, 3);
+    Serial.print(" I="); Serial.print(pidParams.IRateRoll, 3);
+    Serial.print(" D="); Serial.println(pidParams.DRateRoll, 4);
+
+    Serial.print("  Pitch: P="); Serial.print(pidParams.PRatePitch, 3);
+    Serial.print(" I="); Serial.print(pidParams.IRatePitch, 3);
+    Serial.print(" D="); Serial.println(pidParams.DRatePitch, 4);
+
+    Serial.print("  Yaw:   P="); Serial.print(pidParams.PRateYaw, 3);
+    Serial.print(" I="); Serial.print(pidParams.IRateYaw, 3);
+    Serial.print(" D="); Serial.println(pidParams.DRateYaw, 4);
+
+    Serial.println("ANGLE PID:");
+    Serial.print("  Roll:  P="); Serial.print(pidParams.PAngleRoll, 3);
+    Serial.print(" I="); Serial.print(pidParams.IAngleRoll, 3);
+    Serial.print(" D="); Serial.println(pidParams.DAngleRoll, 4);
+
+    Serial.print("  Pitch: P="); Serial.print(pidParams.PAnglePitch, 3);
+    Serial.print(" I="); Serial.print(pidParams.IAnglePitch, 3);
+    Serial.print(" D="); Serial.println(pidParams.DAnglePitch, 4);
+
     PrintCounter = 0; // Reset the counter
   }
 
