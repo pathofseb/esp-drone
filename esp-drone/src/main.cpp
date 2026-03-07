@@ -189,7 +189,7 @@ class PID {
 // Global PID Instances
 PID PIDRateRoll(2, 0.05, 0.03, 800, dt);
 PID PIDRatePitch(2, 0.05, 0.03, 800, dt);
-PID PIDRateYaw(2.0, 12.0, 0.0, 800, dt);
+PID PIDRateYaw(2.0, 0.05, 0.03, 800, dt);
 PID PIDAngleRoll(1.0, 0, 0, 400, dt);
 PID PIDAnglePitch(1.0, 0, 0, 400, dt);
 
