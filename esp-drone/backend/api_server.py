@@ -46,7 +46,7 @@ class PIDParameters(BaseModel):
 
 def pack_pid_parameters(params: PIDParameters):
     """Pack PID parameters into binary format matching C++ struct"""
-    return struct.pack('14f',
+    return struct.pack('15f',  # 15 floats (droneIp is not packed)
         params.PRateRoll,
         params.PRatePitch,
         params.PRateYaw,

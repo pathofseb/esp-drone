@@ -8,7 +8,6 @@
 #include "secrets.h"
 
 int TUNE = 1; // 0 = No Tuning, 1 = Tune PIDs
-int MOTOR_TEST_MODE = 0; // 0=OFF, 1=M1, 2=M2, 3=M3, 4=M4, 5=ALL
 
 float dt = 0.004; // 4ms loop time, aka 250Hz
 
@@ -202,13 +201,31 @@ void setup() {
   Serial.print("TUNE mode: ");
   Serial.println(TUNE);
 
+  // 1. Initialize I2C FIRST (before WiFi to avoid conflicts)
+  Wire.begin(21, 22); // ESP32 default I2C pins
+  Wire.setClock(100000); // 100kHz I2C speed
+  delay(100);
+  Wire.beginTransmission(0x68);
+  Wire.write(0x6B); // Power Management Register
+  Wire.write(0x00); // Wake up MPU
+  Wire.endTransmission();
+  Serial.println("MPU-6050 initialized");
+
   if (TUNE == 1) {
     Serial.println("Starting WiFi configuration...");
     Serial.print("SSID: ");
     Serial.println(WIFI_SSID);
 
-    // Use DHCP to get IP automatically
-    Serial.println("Connecting to WiFi (DHCP)...");
+    // Set static IP to prevent it from changing
+    IPAddress local_IP(192, 168, 50, 100);  // Static IP for drone
+    IPAddress gateway(192, 168, 50, 1);     // Your router
+    IPAddress subnet(255, 255, 255, 0);
+
+    if (!WiFi.config(local_IP, gateway, subnet)) {
+      Serial.println("Failed to configure static IP");
+    }
+
+    Serial.println("Connecting to WiFi with static IP 192.168.50.100...");
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     int attempts = 0;
@@ -236,7 +253,6 @@ void setup() {
   } else {
     Serial.println("TUNE mode disabled - WiFi not starting");
   }
-  
 
   // Initialize PID parameters
   pidParams.PRateRoll = 2.35;
@@ -284,16 +300,7 @@ void setup() {
   motor03.begin();
   motor04.begin();
 
-  // 4. MPU-6050 I2C Setup
-  Wire.setClock(400000);
-  Wire.begin();
-  delay(250);
-  Wire.beginTransmission(0x68); 
-  Wire.write(0x6B); // Power Management Register
-  Wire.write(0x00); // Wake up MPU
-  Wire.endTransmission();
-
-  // 5. Calibration
+  // 4. Calibration (MPU already initialized above)
   Serial.println("Calibrating Gyro... Do not move!");
   for (RateCalibrationNumber=0; RateCalibrationNumber<2000; RateCalibrationNumber ++) {
     gyro_signals();
@@ -336,42 +343,30 @@ void loop() {
 
   if (TUNE == 1) {
     int packetSize = udp.parsePacket();
-    if (packetSize > 0) {
-      Serial.print("UDP packet received! Size: ");
-      Serial.print(packetSize);
-      Serial.print(" bytes, Expected: ");
-      Serial.print(sizeof(PID_Parameters));
-      Serial.println(" bytes");
+    if (packetSize > 0 && packetSize == sizeof(PID_Parameters)) {
+      // Read the incoming packet into the PID_Parameters struct
+      udp.read((char*)&pidParams, sizeof(PID_Parameters));
 
-      if (packetSize == sizeof(PID_Parameters)) {
-        // Read the incoming packet into the PID_Parameters struct
-        udp.read((char*)&pidParams, sizeof(PID_Parameters));
-
-        // Update all PID controllers with new values
-        PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
-        PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
-        PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
-        PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
-        PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
-
-        Serial.println("✓ PID parameters updated!");
-      } else {
-        Serial.println("✗ Wrong packet size, ignoring");
-        udp.flush(); // Discard the packet
-      }
+      // Update all PID controllers with new values
+      PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
+      PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
+      PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
+      PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
+      PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
+    } else if (packetSize > 0) {
+      udp.flush(); // Discard wrong-sized packet
     }
   }
 
   if (radio.available()) {
-  // Read the data and put it into our struct
-  radio.read(&incomingData, sizeof(Data_Package));
+    // Read the data and put it into our struct
+    radio.read(&incomingData, sizeof(Data_Package));
 
-  if (incomingData.throttle == 0) {
+    if (incomingData.throttle == 0) {
       throttle = 0;  // Keep zero as zero (disarmed)
     } else {
       throttle = map(incomingData.throttle, 0, 100, 48, 2047);
     }
-    Serial.println(throttle);
   }
 
   // Sensor companastion and reading

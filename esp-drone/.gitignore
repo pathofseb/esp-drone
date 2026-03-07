@@ -3,3 +3,14 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Environment variables (sensitive data)
+.env
+src/secrets.h
+
+# Backend Python
+backend/__pycache__/
+backend/*.pyc
+backend/.pytest_cache/
+backend/venv/
+backend/.venv/
