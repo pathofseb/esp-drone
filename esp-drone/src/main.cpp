@@ -7,7 +7,7 @@
 #include <WiFiUdp.h>
 #include "secrets.h"
 
-int TUNE = 1; // 0 = No Tuning, 1 = Tune PIDs
+int TUNE = 1  ; // 0 = No Tuning, 1 = Tune PIDs
 
 float dt = 0.004; // 4ms loop time, aka 250Hz
 
@@ -72,52 +72,45 @@ DShotRMT motor04(MOTOR04_PIN, DSHOT_MODE, IS_BIDIRECTIONAL);
 
 
 // Gyro related functions
-void kalman_1d(float KalmanState, float KalmanUncertainty, float KalmanInput, float KalmanMeasurement) {
+void kalman_1d(float &KalmanState, float &KalmanUncertainty, float KalmanInput, float KalmanMeasurement) {
   KalmanState=KalmanState+dt*KalmanInput;
   KalmanUncertainty=KalmanUncertainty + dt * dt * 4 * 4;
   float KalmanGain=KalmanUncertainty * 1/(1*KalmanUncertainty + 3 * 3);
   KalmanState=KalmanState+KalmanGain * (KalmanMeasurement-KalmanState);
   KalmanUncertainty=(1-KalmanGain) * KalmanUncertainty;
-  Kalman1DOutput[0]=KalmanState; 
+  Kalman1DOutput[0]=KalmanState;
   Kalman1DOutput[1]=KalmanUncertainty;
 }
 
 
-void gyro_signals(void) {
-  Wire.beginTransmission(0x68); // Reads data from mem adress 104
-  Wire.write(0x1A);
-  Wire.write(0x05);
-  Wire.endTransmission();
-  Wire.beginTransmission(0x68);
-  Wire.write(0x1C);
-  Wire.write(0x10);
-  Wire.endTransmission();
+void gyro_signals() {
+
   Wire.beginTransmission(0x68);
   Wire.write(0x3B);
-  Wire.endTransmission(); 
-  Wire.requestFrom(0x68,6);
-  int16_t AccXLSB = Wire.read() << 8 | Wire.read();
-  int16_t AccYLSB = Wire.read() << 8 | Wire.read();
-  int16_t AccZLSB = Wire.read() << 8 | Wire.read();
-  Wire.beginTransmission(0x68);
-  Wire.write(0x1B); 
-  Wire.write(0x8);
-  Wire.endTransmission();     
-  Wire.beginTransmission(0x68);
-  Wire.write(0x43);
-  Wire.endTransmission();
-  Wire.requestFrom(0x68,6);
-  int16_t GyroX=Wire.read()<<8 | Wire.read();
-  int16_t GyroY=Wire.read()<<8 | Wire.read();
-  int16_t GyroZ=Wire.read()<<8 | Wire.read();
-  RateRoll=(float)GyroX/65.5;
-  RatePitch=(float)GyroY/65.5;
-  RateYaw=(float)GyroZ/65.5;
-  AccX=(float)AccXLSB/4096;
-  AccY=(float)AccYLSB/4096;
-  AccZ=(float)AccZLSB/4096;
-  AngleRoll=atan(AccY/sqrt(AccX*AccX+AccZ*AccZ))*1/(3.142/180);
-  AnglePitch=-atan(AccX/sqrt(AccY*AccY+AccZ*AccZ))*1/(3.142/180);
+  Wire.endTransmission(false);
+
+  Wire.requestFrom(0x68, 14, true);
+
+  int16_t AccXLSB = Wire.read()<<8 | Wire.read();
+  int16_t AccYLSB = Wire.read()<<8 | Wire.read();
+  int16_t AccZLSB = Wire.read()<<8 | Wire.read();
+
+  Wire.read(); Wire.read(); // skip temperature
+
+  int16_t GyroX = Wire.read()<<8 | Wire.read();
+  int16_t GyroY = Wire.read()<<8 | Wire.read();
+  int16_t GyroZ = Wire.read()<<8 | Wire.read();
+
+  RateRoll = (float)GyroX / 65.5;
+  RatePitch = (float)GyroY / 65.5;
+  RateYaw = (float)GyroZ / 65.5;
+
+  AccX = (float)AccXLSB / 4096;
+  AccY = (float)AccYLSB / 4096;
+  AccZ = (float)AccZLSB / 4096;
+
+  AngleRoll = atan(AccY / sqrt(AccX*AccX + AccZ*AccZ)) * 180 / PI;
+  AnglePitch = -atan(AccX / sqrt(AccY*AccY + AccZ*AccZ)) * 180 / PI;
 }
 
 
@@ -164,11 +157,11 @@ class PID {
 
       // 2. Integral (Trapezoidal Rule)
       integral += (error + prevError) * dt / 2.0f;
-      
+
       // Clamp Integral (Anti-Windup)
       if (integral > maxOutput) integral = maxOutput;
       else if (integral < -maxOutput) integral = -maxOutput;
-      
+
       float I = Ki * integral;
 
       // 3. Derivative
@@ -187,11 +180,11 @@ class PID {
 };
 
 // Global PID Instances
-PID PIDRateRoll(2, 0.05, 0.03, 800, dt);
-PID PIDRatePitch(2, 0.05, 0.03, 800, dt);
+PID PIDRateRoll(2.35, 0.05, 0.08, 800, dt);
+PID PIDRatePitch(2.35, 0.05, 0.08, 800, dt);
 PID PIDRateYaw(2.0, 0.05, 0.03, 800, dt);
-PID PIDAngleRoll(1.0, 0, 0, 400, dt);
-PID PIDAnglePitch(1.0, 0, 0, 400, dt);
+PID PIDAngleRoll(2.0, 0, 0, 400, dt);
+PID PIDAnglePitch(2.0, 0, 0, 400, dt);
 
 void setup() {
   Serial.begin(115200); // Increased speed to match your test script
@@ -202,13 +195,30 @@ void setup() {
   Serial.println(TUNE);
 
   // 1. Initialize I2C FIRST (before WiFi to avoid conflicts)
-  Wire.begin(21, 22); // ESP32 default I2C pins
-  Wire.setClock(100000); // 100kHz I2C speed
-  delay(100);
+  Wire.begin(21, 22);
+  Wire.setClock(100000);
+  Wire.setTimeOut(10);
   Wire.beginTransmission(0x68);
-  Wire.write(0x6B); // Power Management Register
-  Wire.write(0x00); // Wake up MPU
+  Wire.write(0x6B);
+  Wire.write(0x00);
   Wire.endTransmission();
+
+  // configure MPU6050 once
+  Wire.beginTransmission(0x68);
+  Wire.write(0x1A);
+  Wire.write(0x05);
+  Wire.endTransmission();
+
+  Wire.beginTransmission(0x68);
+  Wire.write(0x1C);
+  Wire.write(0x10);
+  Wire.endTransmission();
+
+  Wire.beginTransmission(0x68);
+  Wire.write(0x1B);
+  Wire.write(0x08);
+  Wire.endTransmission();
+
   Serial.println("MPU-6050 initialized");
 
   if (TUNE == 1) {
@@ -216,16 +226,8 @@ void setup() {
     Serial.print("SSID: ");
     Serial.println(WIFI_SSID);
 
-    // Set static IP to prevent it from changing
-    IPAddress local_IP(192, 168, 50, 100);  // Static IP for drone
-    IPAddress gateway(192, 168, 50, 1);     // Your router
-    IPAddress subnet(255, 255, 255, 0);
-
-    if (!WiFi.config(local_IP, gateway, subnet)) {
-      Serial.println("Failed to configure static IP");
-    }
-
-    Serial.println("Connecting to WiFi with static IP 192.168.50.100...");
+    // Use DHCP for automatic IP assignment
+    Serial.println("Connecting to WiFi with DHCP...");
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
     int attempts = 0;
@@ -254,18 +256,20 @@ void setup() {
     Serial.println("TUNE mode disabled - WiFi not starting");
   }
 
+  delay(1000); // Short delay before starting sensors and motors
+
   // Initialize PID parameters
   pidParams.PRateRoll = 2.35;
   pidParams.PRatePitch = 2.35;
-  pidParams.PRateYaw = 2;
-  pidParams.IRateRoll = 0.05;
-  pidParams.IRatePitch = 0.05;
-  pidParams.IRateYaw = 12;
-  pidParams.DRateRoll = 0.03;
-  pidParams.DRatePitch = 0.03;
-  pidParams.DRateYaw = 0;
-  pidParams.PAngleRoll = 1.0;
-  pidParams.PAnglePitch = 1.0;
+  pidParams.PRateYaw = 3.5;
+  pidParams.IRateRoll = 0.5;
+  pidParams.IRatePitch = 0.5;
+  pidParams.IRateYaw = 0.0;
+  pidParams.DRateRoll = 0.04;
+  pidParams.DRatePitch = 0.04;
+  pidParams.DRateYaw = 0.02;
+  pidParams.PAngleRoll = 1.5;
+  pidParams.PAnglePitch = 1.5;
   pidParams.IAngleRoll = 0;
   pidParams.IAnglePitch = 0;
   pidParams.DAngleRoll = 0;
@@ -280,7 +284,7 @@ void setup() {
 
   // 1. Explicitly define SPI pins for the NRF24L01
   // SCK=18, MISO=19, MOSI=23, SS/CSN=26
-  SPI.begin(18, 19, 23, 26); 
+  SPI.begin(18, 19, 23, 26);
 
   // 2. Initialize Radio
   if (!radio.begin()) {
@@ -334,27 +338,41 @@ void setup() {
     delay(4);
   }
   Serial.println("System Ready!");
-  
+
   LoopTimer=micros();
 }
 
 
 void loop() {
 
+  // Only check for UDP packets every 50 loops (5Hz instead of 250Hz)
+  static int udpCheckCounter = 0;
   if (TUNE == 1) {
-    int packetSize = udp.parsePacket();
-    if (packetSize > 0 && packetSize == sizeof(PID_Parameters)) {
-      // Read the incoming packet into the PID_Parameters struct
-      udp.read((char*)&pidParams, sizeof(PID_Parameters));
+    udpCheckCounter++;
+    if (udpCheckCounter >= 50) {  // Check every 200ms (5Hz)
+      udpCheckCounter = 0;
 
-      // Update all PID controllers with new values
-      PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
-      PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
-      PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
-      PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
-      PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
-    } else if (packetSize > 0) {
-      udp.flush(); // Discard wrong-sized packet
+      int packetSize = udp.parsePacket();
+      if (packetSize > 0 && packetSize == sizeof(PID_Parameters)) {
+        // Read the incoming packet into the PID_Parameters struct
+        udp.read((char*)&pidParams, sizeof(PID_Parameters));
+
+        // Update all PID controllers with new values
+        PIDRateRoll.updateGains(pidParams.PRateRoll, pidParams.IRateRoll, pidParams.DRateRoll);
+        PIDRatePitch.updateGains(pidParams.PRatePitch, pidParams.IRatePitch, pidParams.DRatePitch);
+        PIDRateYaw.updateGains(pidParams.PRateYaw, pidParams.IRateYaw, pidParams.DRateYaw);
+        PIDAngleRoll.updateGains(pidParams.PAngleRoll, pidParams.IAngleRoll, pidParams.DAngleRoll);
+        PIDAnglePitch.updateGains(pidParams.PAnglePitch, pidParams.IAnglePitch, pidParams.DAnglePitch);
+
+        Serial.println("✓ UDP packet received - PID updated!");
+      } else if (packetSize > 0) {
+        Serial.print("✗ Wrong packet size: ");
+        Serial.print(packetSize);
+        Serial.print(" (expected ");
+        Serial.print(sizeof(PID_Parameters));
+        Serial.println(")");
+        udp.flush(); // Discard wrong-sized packet
+      }
     }
   }
 
@@ -371,7 +389,7 @@ void loop() {
 
   // Sensor companastion and reading
   gyro_signals();
-  
+
   RateRoll -= RateCalibrationRoll;
   RatePitch -= RateCalibrationPitch;
   RateYaw -= RateCalibrationYaw;
@@ -380,39 +398,47 @@ void loop() {
   AngleRoll -= AccAngleCalibrationRoll;
   AnglePitch -= AccAngleCalibrationPitch;
 
-  // 1D Kalman Filter for roll
+  // 1D Kalman Filter for roll and pitch
   kalman_1d(KalmanAngleRoll, KalmanUncertaintyAngleRoll, RateRoll, AngleRoll);
-  KalmanAngleRoll = Kalman1DOutput[0]; 
-  KalmanUncertaintyAngleRoll = Kalman1DOutput[1];
-
-  // 1D Kalman Filter for pitch
   kalman_1d(KalmanAnglePitch, KalmanUncertaintyAnglePitch, RatePitch, AnglePitch);
-  KalmanAnglePitch = Kalman1DOutput[0]; 
-  KalmanUncertaintyAnglePitch = Kalman1DOutput[1];
 
 
-  // Angles
-  DesiredAngleRoll = incomingData.roll;
-  DesiredAnglePitch = incomingData.pitch;
-  DesiredRateYaw = incomingData.yawRate;
+  // ONLY run PID when armed (throttle > 48)
+  if (throttle > 48) {
+    // Angles
+    DesiredAngleRoll = incomingData.roll;
+    DesiredAnglePitch = incomingData.pitch;
+    DesiredRateYaw = incomingData.yawRate;
 
-  // 2. Outer Loop (Angle PID)
-  ErrorAngleRoll = DesiredAngleRoll - KalmanAngleRoll;
-  ErrorAnglePitch = DesiredAnglePitch - KalmanAnglePitch;
+    // 2. Outer Loop (Angle PID)
+    ErrorAngleRoll = DesiredAngleRoll - KalmanAngleRoll;
+    ErrorAnglePitch = DesiredAnglePitch - KalmanAnglePitch;
 
-  DesiredRateRoll  = PIDAngleRoll.compute(ErrorAngleRoll);
-  DesiredRatePitch = PIDAnglePitch.compute(ErrorAnglePitch);
+    DesiredRateRoll  = PIDAngleRoll.compute(ErrorAngleRoll);
+    DesiredRatePitch = PIDAnglePitch.compute(ErrorAnglePitch);
 
-  // 3. Inner Loop (Rate PID)
-  ErrorRateRoll = DesiredRateRoll - RateRoll;
-  ErrorRatePitch = DesiredRatePitch - RatePitch;
-  ErrorRateYaw = DesiredRateYaw - RateYaw;
+    // 3. Inner Loop (Rate PID)
+    ErrorRateRoll = DesiredRateRoll - RateRoll;
+    ErrorRatePitch = DesiredRatePitch - RatePitch;
+    ErrorRateYaw = DesiredRateYaw + RateYaw; // Needs + because of how yaw is measured (fixes stability issues)
 
-  InputRoll = PIDRateRoll.compute(ErrorRateRoll);
-  InputPitch = PIDRatePitch.compute(ErrorRatePitch);
-  InputYaw = PIDRateYaw.compute(ErrorRateYaw);
+    InputRoll = PIDRateRoll.compute(ErrorRateRoll);
+    InputPitch = PIDRatePitch.compute(ErrorRatePitch);
+    InputYaw = PIDRateYaw.compute(ErrorRateYaw);
+  } else {
+    // Disarmed - zero all PID outputs and reset integrators
+    InputRoll = 0;
+    InputPitch = 0;
+    InputYaw = 0;
 
-  // setup motor stuff 
+    PIDRateRoll.reset();
+    PIDRatePitch.reset();
+    PIDRateYaw.reset();
+    PIDAngleRoll.reset();
+    PIDAnglePitch.reset();
+  }
+
+  // setup motor stuff
   // Safety first
 
   // 4. Motor Mixing
@@ -423,21 +449,14 @@ void loop() {
     MotorInput2 = throttle - InputRoll + InputPitch - InputYaw; // Rear Right (CW)
     MotorInput3 = throttle + InputRoll + InputPitch + InputYaw; // Rear Left (CCW)
     MotorInput4 = throttle + InputRoll - InputPitch - InputYaw; // Front Left (CW)
-    
+
     // DShot CLAMPING:
     MotorInput1 = constrain(MotorInput1, 48, 2047);
     MotorInput2 = constrain(MotorInput2, 48, 2047);
     MotorInput3 = constrain(MotorInput3, 48, 2047);
     MotorInput4 = constrain(MotorInput4, 48, 2047);
   } else {
-    // Kill motors if throttle low
-
-    PIDRateRoll.reset();
-    PIDRatePitch.reset();
-    PIDRateYaw.reset();
-    PIDAngleRoll.reset();
-    PIDAnglePitch.reset();
-
+    // Kill motors if throttle low (PIDs already reset above)
     MotorInput1 = 0;
     MotorInput2 = 0;
     MotorInput3 = 0;
@@ -450,35 +469,44 @@ void loop() {
   motor03.sendThrottle(MotorInput3);
   motor04.sendThrottle(MotorInput4);
 
-  // --- Only print every 10th loop ---
+  // --- Print every 25th loop (100ms at 250Hz) ---
   PrintCounter++;
-  if (PrintCounter >= 100) {
-    Serial.println("\n=== PID PARAMETERS ===");
-    Serial.println("RATE PID:");
-    Serial.print("  Roll:  P="); Serial.print(pidParams.PRateRoll, 3);
-    Serial.print(" I="); Serial.print(pidParams.IRateRoll, 3);
-    Serial.print(" D="); Serial.println(pidParams.DRateRoll, 4);
+  if (PrintCounter >= 25) {
+    // All on ONE line for easy logging/plotting
+    Serial.print("Thr:"); Serial.print((int)throttle);
+    Serial.print(" | InR:"); Serial.print((int)InputRoll);
+    Serial.print(" InP:"); Serial.print((int)InputPitch);
+    Serial.print(" InY:"); Serial.print((int)InputYaw); 
+    Serial.print(" | M1:"); Serial.print((int)MotorInput1);
+    Serial.print(" M2:"); Serial.print((int)MotorInput2);
+    Serial.print(" M3:"); Serial.print((int)MotorInput3);
+    Serial.print(" M4:"); Serial.print((int)MotorInput4);
+    Serial.print(" | Gy-R:"); Serial.print(RateRoll, 1);
+    Serial.print(" Gy-P:"); Serial.print(RatePitch, 1);
+    Serial.print(" Gy-Y:"); Serial.print(RateYaw, 1);
+    Serial.print(" | Ka-R:"); Serial.print(KalmanAngleRoll, 1);
+    Serial.print(" Ka-P:"); Serial.println(KalmanAnglePitch, 1);
 
-    Serial.print("  Pitch: P="); Serial.print(pidParams.PRatePitch, 3);
-    Serial.print(" I="); Serial.print(pidParams.IRatePitch, 3);
-    Serial.print(" D="); Serial.println(pidParams.DRatePitch, 4);
-
-    Serial.print("  Yaw:   P="); Serial.print(pidParams.PRateYaw, 3);
-    Serial.print(" I="); Serial.print(pidParams.IRateYaw, 3);
-    Serial.print(" D="); Serial.println(pidParams.DRateYaw, 4);
-
-    Serial.println("ANGLE PID:");
-    Serial.print("  Roll:  P="); Serial.print(pidParams.PAngleRoll, 3);
-    Serial.print(" I="); Serial.print(pidParams.IAngleRoll, 3);
-    Serial.print(" D="); Serial.println(pidParams.DAngleRoll, 4);
-
-    Serial.print("  Pitch: P="); Serial.print(pidParams.PAnglePitch, 3);
-    Serial.print(" I="); Serial.print(pidParams.IAnglePitch, 3);
-    Serial.print(" D="); Serial.println(pidParams.DAnglePitch, 4);
+    // Print PID parameters on a new line
+    Serial.print("PID | RR-P:"); Serial.print(pidParams.PRateRoll, 2);
+    Serial.print(" I:"); Serial.print(pidParams.IRateRoll, 2);
+    Serial.print(" D:"); Serial.print(pidParams.DRateRoll, 3);
+    Serial.print(" | RP-P:"); Serial.print(pidParams.PRatePitch, 2);
+    Serial.print(" I:"); Serial.print(pidParams.IRatePitch, 2);
+    Serial.print(" D:"); Serial.print(pidParams.DRatePitch, 3);
+    Serial.print(" | RY-P:"); Serial.print(pidParams.PRateYaw, 2);
+    Serial.print(" I:"); Serial.print(pidParams.IRateYaw, 2);
+    Serial.print(" D:"); Serial.print(pidParams.DRateYaw, 3);
+    Serial.print(" | AR-P:"); Serial.print(pidParams.PAngleRoll, 2);
+    Serial.print(" I:"); Serial.print(pidParams.IAngleRoll, 2);
+    Serial.print(" D:"); Serial.print(pidParams.DAngleRoll, 3);
+    Serial.print(" | AP-P:"); Serial.print(pidParams.PAnglePitch, 2);
+    Serial.print(" I:"); Serial.print(pidParams.IAnglePitch, 2);
+    Serial.print(" D:"); Serial.println(pidParams.DAnglePitch, 3);
 
     PrintCounter = 0; // Reset the counter
   }
 
   while (micros() - LoopTimer < 4000);
-  LoopTimer = micros();  
+  LoopTimer = micros();
 }
